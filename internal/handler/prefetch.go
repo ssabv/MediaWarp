@@ -4,6 +4,7 @@ import (
 	"MediaWarp/constants"
 	"MediaWarp/internal/config"
 	"MediaWarp/internal/logging"
+	"context"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -48,7 +49,7 @@ func InitPrefetchService(mediaServerType constants.MediaServerType, addr string,
 	var err error
 	if config.Cache.Enable {
 		cache, err = bigcache.New(
-			nil,
+			context.Background(),
 			bigcache.DefaultConfig(30*time.Minute),
 		)
 		if err != nil {
