@@ -8,8 +8,8 @@ COPY . .
 RUN go mod download && \
     go build -ldflags " \
     -s -w \
-    -X MediaWarp/internal/config.commitHash=$(git rev-parse HEAD) \
-    -X MediaWarp/internal/config.buildDate=$(date -u '+%Y-%m-%d %H:%M:%S')" \
+    -X 'MediaWarp/internal/config.commitHash=$(git rev-parse HEAD)' \
+    -X 'MediaWarp/internal/config.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)'" \
     -o MediaWarp
 
 FROM alpine:latest
