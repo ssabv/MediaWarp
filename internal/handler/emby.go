@@ -198,6 +198,15 @@ func (embyServerHandler *EmbyServerHandler) ModifyPlaybackInfo(rw *http.Response
 				}
 			}
 
+			// 异步预解析 HTTPStrm URL 并缓存，实现秒起播
+			if config.HTTPStrm.FinalURL && config.Cache.Enable && mediasource.Path != nil {
+				go func(sourceName string, sourcePath string) {
+					logging.Infof("ModifyPlaybackInfo HTTPStrm 预解析开始: %s -> %s", sourceName, sourcePath)
+					finalURL := embyServerHandler.httpStrmHandler(sourcePath, "")
+					logging.Infof("ModifyPlaybackInfo HTTPStrm 预解析完成: %s, 最终直链: %s", sourceName, finalURL)
+				}(*mediasource.Name, *mediasource.Path)
+			}
+
 		case constants.AlistStrm: // AlistStm 设置支持直链播放并且禁止转码
 			if !config.AlistStrm.TransCode {
 				jsonChain.Set(
