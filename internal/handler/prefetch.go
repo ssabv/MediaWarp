@@ -27,7 +27,6 @@ type playbackTimer struct {
 // PrefetchService 下一集直链预提取服务
 type PrefetchService struct {
 	cache             *bigcache.BigCache
-	httpStrmHandler   StrmHandlerFunc
 	mediaServerType   constants.MediaServerType
 	mediaServerAddr   string
 	mediaServerAPIKey string
@@ -56,18 +55,20 @@ func InitPrefetchService(mediaServerType constants.MediaServerType, addr string,
 	var cache *bigcache.BigCache
 	var err error
 	if config.Cache.Enable {
-		cache, err = bigcache.New(
-			context.Background(),
-			bigcache.DefaultConfig(30*time.Minute),
-		)
+		// 使用较少 shard，预提取缓存只需要少量条目，避免内存浪费
+		cacheConfig := bigcache.Config{
+			Shards:             32,
+			LifeWindow:         30 * time.Minute,
+			CleanWindow:        1 * time.Minute,
+			MaxEntriesInWindow: 100,
+			MaxEntrySize:       2000,
+			HardMaxCacheSize:   16, // 16MB 上限
+			Verbose:            false,
+		}
+		cache, err = bigcache.New(context.Background(), cacheConfig)
 		if err != nil {
 			return fmt.Errorf("创建预提取缓存失败: %w", err)
 		}
-	}
-
-	httpStrmHandler, err := getHTTPStrmHandler()
-	if err != nil {
-		return fmt.Errorf("预提取服务创建 HTTPStrm 处理器失败: %w", err)
 	}
 
 	maxConcurrent := config.Prefetch.MaxConcurrentPrefetch
@@ -77,7 +78,6 @@ func InitPrefetchService(mediaServerType constants.MediaServerType, addr string,
 
 	prefetchService = &PrefetchService{
 		cache:             cache,
-		httpStrmHandler:   httpStrmHandler,
 		mediaServerType:   mediaServerType,
 		mediaServerAddr:   addr,
 		mediaServerAPIKey: apiKey,
@@ -207,7 +207,7 @@ func (p *PrefetchService) doPrefetch(itemID string) {
 	logging.Infof("预提取：开始解析剧集 %s 的直链", itemID)
 
 	// 获取 Strm 内容（HTTP URL）和类型
-	content, ua, err := p.getStrmContent(itemID)
+	content, _, err := p.getStrmContent(itemID)
 	if err != nil {
 		logging.Warningf("预提取：获取剧集 %s 的 Strm 内容失败: %v", itemID, err)
 		return
@@ -217,10 +217,10 @@ func (p *PrefetchService) doPrefetch(itemID string) {
 		return
 	}
 
-	// 调用 httpStrmHandler 获取最终直链
-	finalURL := p.httpStrmHandler(content, ua)
-	if finalURL == "" {
-		logging.Warningf("预提取：解析剧集 %s 直链失败", itemID)
+	// 直接调用 getFinalURL 获取最终直链（和正常播放完全一样）
+	finalURL, err := p.resolveFinalURL(content)
+	if err != nil {
+		logging.Warningf("预提取：解析剧集 %s 直链失败: %v", itemID, err)
 		return
 	}
 
@@ -242,6 +242,17 @@ func (p *PrefetchService) doPrefetch(itemID string) {
 		ttl := expiresAt.Sub(time.Now())
 		logging.Infof("预提取：剧集 %s 直链已缓存，TTL: %v", itemID, ttl.Round(time.Second))
 	}
+}
+
+// resolveFinalURL 解析 Strm URL 的最终直链
+func (p *PrefetchService) resolveFinalURL(rawURL string) (string, error) {
+	client := &http.Client{
+		Timeout: RedirectTimeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	return getFinalURL(client, rawURL, "")
 }
 
 // queryItemRuntime 查询剧集的运行时和剧集信息
