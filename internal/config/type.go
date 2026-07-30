@@ -98,6 +98,16 @@ type SubtitleSetting struct {
 	SubSet   bool     `yaml:"subset"` // ASS 字幕字体子集化
 }
 
+// 预提取设置
+type PrefetchSetting struct {
+	Enable                  bool `yaml:"enable"`
+	ProgressThreshold       float64 `yaml:"progress_threshold"`        // 播放进度阈值（0-1），默认 0.70
+	MinRemainingSeconds     float64 `yaml:"min_remaining_seconds"`     // 剩余时间阈值（秒），0 表示禁用
+	TriggerOncePerEpisode   bool   `yaml:"trigger_once_per_episode"`    // 每集只触发一次
+	MaxConcurrentPrefetch   int    `yaml:"max_concurrent_prefetch"`     // 最大并发预取数
+	PrefetchTimeout         int    `yaml:"prefetch_timeout"`            // 预取超时时间（秒）
+}
+
 type Setting struct {
 	Port         uint16              `yaml:"port"`
 	MediaServer  MediaServerSetting  `yaml:"server"`
@@ -108,4 +118,5 @@ type Setting struct {
 	HTTPStrm     HTTPStrmSetting     `yaml:"http_strm"`
 	AlistStrm    AlistStrmSetting    `yaml:"alist_strm"`
 	Subtitle     SubtitleSetting     `yaml:"subtitle"`
+	Prefetch     PrefetchSetting     `yaml:"prefetch"`
 }

@@ -29,6 +29,7 @@ var (
 	HTTPStrm     HTTPStrmSetting     // HTTPSTRM设置
 	AlistStrm    AlistStrmSetting    // AlistStrm设置
 	Subtitle     SubtitleSetting     // 字幕设置
+	Prefetch     PrefetchSetting     // 预提取设置
 )
 
 // 获取版本信息
@@ -118,6 +119,7 @@ func loadConfig(path string) error {
 	HTTPStrm = s.HTTPStrm
 	AlistStrm = s.AlistStrm
 	Subtitle = s.Subtitle
+	Prefetch = s.Prefetch
 	return nil
 }
 

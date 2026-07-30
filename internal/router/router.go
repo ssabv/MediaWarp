@@ -18,6 +18,7 @@ func InitRouter() *gin.Engine {
 		middleware.Logger(),
 		middleware.Recovery(),
 		middleware.SetRefererPolicy(constants.SameOrigin),
+		middleware.PrefetchProgress(),
 	)
 
 	if config.ClientFilter.Enable {

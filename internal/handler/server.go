@@ -3,6 +3,7 @@ package handler
 import (
 	"MediaWarp/constants"
 	"MediaWarp/internal/config"
+	"MediaWarp/internal/logging"
 	"errors"
 	"net/http"
 	"regexp"
@@ -30,7 +31,16 @@ func Init() error {
 	default:
 		err = ErrInvalidMediaServerType
 	}
-	return err
+	if err != nil {
+		return err
+	}
+
+	// 初始化预提取服务
+	if err := InitPrefetchService(config.MediaServer.Type, config.MediaServer.ADDR, config.MediaServer.AUTH); err != nil {
+		logging.Warning("预提取服务初始化失败: ", err)
+	}
+
+	return nil
 }
 
 // 获取媒体服务器接口
