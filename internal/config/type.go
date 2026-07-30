@@ -100,12 +100,9 @@ type SubtitleSetting struct {
 
 // 预提取设置
 type PrefetchSetting struct {
-	Enable                  bool `yaml:"enable"`
-	ProgressThreshold       float64 `yaml:"progress_threshold"`        // 播放进度阈值（0-1），默认 0.70
-	MinRemainingSeconds     float64 `yaml:"min_remaining_seconds"`     // 剩余时间阈值（秒），0 表示禁用
-	TriggerOncePerEpisode   bool   `yaml:"trigger_once_per_episode"`    // 每集只触发一次
-	MaxConcurrentPrefetch   int    `yaml:"max_concurrent_prefetch"`     // 最大并发预取数
-	PrefetchTimeout         int    `yaml:"prefetch_timeout"`            // 预取超时时间（秒）
+	Enable                bool    `yaml:"enable"`
+	RefreshInterval       float64 `yaml:"refresh_interval"`        // 刷新间隔（视频时长百分比），默认 0.25
+	MaxConcurrentPrefetch int     `yaml:"max_concurrent_prefetch"` // 最大并发预取数
 }
 
 type Setting struct {

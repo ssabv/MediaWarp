@@ -87,8 +87,7 @@ subtitle:                                   # 字体相关设置（仅 Emby 支�
 
 prefetch:                                   # 预提取下一集直链
   enable: true                              # 是否启用预提取
-  progress_threshold: 0.70                  # 播放进度阈值（0-1），播放到 70% 时触发预提取
-  min_remaining_seconds: 180                # 剩余时间阈值（秒），剩余不足 180 秒时也触发。0 表示禁用
-  trigger_once_per_episode: true            # 每集只触发一次，避免重复预取（快进场景会自动跟踪最高进度）
+  refresh_interval: 0.25                    # 刷新间隔（视频时长百分比），默认 0.25（每 25% 时长刷新一次直链）
+                                            # 例如：45 分钟剧集 → 每 11.25 分钟刷新一次
+                                            #       10 分钟视频 → 每 2.5 分钟刷新一次
   max_concurrent_prefetch: 3                # 最大并发预取数
-  prefetch_timeout: 10                      # 预取超时时间（秒）

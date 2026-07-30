@@ -120,6 +120,9 @@ func loadConfig(path string) error {
 	AlistStrm = s.AlistStrm
 	Subtitle = s.Subtitle
 	Prefetch = s.Prefetch
+	if Prefetch.RefreshInterval <= 0 {
+		Prefetch.RefreshInterval = 0.25 // 默认每 25% 时长刷新
+	}
 	return nil
 }
 
