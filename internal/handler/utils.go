@@ -121,7 +121,7 @@ func getFinalURL(client *http.Client, rawURL string, ua string) (string, error) 
 		visited[currentURL] = struct{}{}
 		redirectChain = append(redirectChain, currentURL)
 
-		req, err := http.NewRequest(http.MethodHead, currentURL, nil) // 创建 HEAD 请求（更高效，只获取头部信息）
+		req, err := http.NewRequest(http.MethodGet, currentURL, nil) // 创建 GET 请求，123pan-strm-docker 对 GET 返回 302 跳转
 		if err != nil {
 			return "", fmt.Errorf("创建请求失败: %w", err)
 		}
