@@ -15,6 +15,7 @@ type MediaServerHandler interface {
 	GetRegexpRouteRules() []RegexpRouteRule          // 获取正则路由表
 	GetImageCacheRegexp() *regexp.Regexp             // 获取图片缓存正则表达式
 	GetSubtitleCacheRegexp() *regexp.Regexp          // 字幕缓存正则表达式
+	GetHTTPStrmHandler() StrmHandlerFunc             // 获取 HTTPStrm 处理器
 }
 
 var mediaServerHandler MediaServerHandler
@@ -35,8 +36,9 @@ func Init() error {
 		return err
 	}
 
-	// 初始化预提取服务
-	if err := InitPrefetchService(config.MediaServer.Type, config.MediaServer.ADDR, config.MediaServer.AUTH); err != nil {
+	// 初始化预提取服务（复用主 handler 的 bigcache）
+	httpStrmHandler := mediaServerHandler.GetHTTPStrmHandler()
+	if err := InitPrefetchService(config.MediaServer.Type, config.MediaServer.ADDR, config.MediaServer.AUTH, httpStrmHandler); err != nil {
 		logging.Warning("预提取服务初始化失败: ", err)
 	}
 

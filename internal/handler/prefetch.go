@@ -4,71 +4,46 @@ import (
 	"MediaWarp/constants"
 	"MediaWarp/internal/config"
 	"MediaWarp/internal/logging"
-	"context"
 	"fmt"
 	"net/http"
 	"net/url"
-	"strconv"
 	"sync"
 	"time"
 
-	"github.com/allegro/bigcache/v3"
 	"github.com/tidwall/gjson"
 )
 
 // playbackTimer 播放定时器，用于定时刷新预提取缓存
 type playbackTimer struct {
-	ticker    *time.Ticker
-	stopChan  chan struct{}
-	nextID    string // 下一集 ID
+	ticker     *time.Ticker
+	stopChan   chan struct{}
+	nextID     string // 下一集 ID
 	runTimeSec int64  // 当前集时长（秒）
 }
 
 // PrefetchService 下一集直链预提取服务
 type PrefetchService struct {
-	cache             *bigcache.BigCache
+	httpStrmHandler   StrmHandlerFunc // 复用主 handler 的 bigcache
 	mediaServerType   constants.MediaServerType
 	mediaServerAddr   string
 	mediaServerAPIKey string
 
-	mu         sync.Mutex
-	timers     map[string]*playbackTimer // map[currentEpisodeID]*playbackTimer
+	mu     sync.Mutex
+	timers map[string]*playbackTimer
 
-	// 并发控制
 	sem chan struct{}
 }
 
 var prefetchService *PrefetchService
 
-// GetPrefetchService 获取预提取服务实例
 func GetPrefetchService() *PrefetchService {
 	return prefetchService
 }
 
-// InitPrefetchService 初始化预提取服务
-func InitPrefetchService(mediaServerType constants.MediaServerType, addr string, apiKey string) error {
+func InitPrefetchService(mediaServerType constants.MediaServerType, addr string, apiKey string, httpStrmHandler StrmHandlerFunc) error {
 	if !config.Prefetch.Enable {
 		logging.Info("预提取服务未启用")
 		return nil
-	}
-
-	var cache *bigcache.BigCache
-	var err error
-	if config.Cache.Enable {
-		// 使用较少 shard，预提取缓存只需要少量条目，避免内存浪费
-		cacheConfig := bigcache.Config{
-			Shards:             32,
-			LifeWindow:         30 * time.Minute,
-			CleanWindow:        1 * time.Minute,
-			MaxEntriesInWindow: 100,
-			MaxEntrySize:       2000,
-			HardMaxCacheSize:   16, // 16MB 上限
-			Verbose:            false,
-		}
-		cache, err = bigcache.New(context.Background(), cacheConfig)
-		if err != nil {
-			return fmt.Errorf("创建预提取缓存失败: %w", err)
-		}
 	}
 
 	maxConcurrent := config.Prefetch.MaxConcurrentPrefetch
@@ -77,7 +52,7 @@ func InitPrefetchService(mediaServerType constants.MediaServerType, addr string,
 	}
 
 	prefetchService = &PrefetchService{
-		cache:             cache,
+		httpStrmHandler:   httpStrmHandler,
 		mediaServerType:   mediaServerType,
 		mediaServerAddr:   addr,
 		mediaServerAPIKey: apiKey,
@@ -85,7 +60,7 @@ func InitPrefetchService(mediaServerType constants.MediaServerType, addr string,
 		sem:               make(chan struct{}, maxConcurrent),
 	}
 
-	logging.Infof("预提取服务已启用（定时刷新模式，刷新间隔: %.0f%% 视频时长，最大并发: %d）",
+	logging.Infof("预提取服务已启用（定时刷新模式，间隔: %.0f%% 视频时长，最大并发: %d）",
 		config.Prefetch.RefreshInterval*100,
 		maxConcurrent,
 	)
@@ -100,7 +75,6 @@ func (p *PrefetchService) OnPlaybackStart(itemID string) {
 
 	logging.Infof("播放开始: %s，查询下一集...", itemID)
 
-	// 查询当前剧集的运行时信息
 	runTimeTicks, seriesID, seasonID, currentIndex, err := p.queryItemRuntime(itemID)
 	if err != nil {
 		logging.Debugf("预提取：查询剧集信息失败: %v", err)
@@ -111,11 +85,10 @@ func (p *PrefetchService) OnPlaybackStart(itemID string) {
 		return
 	}
 
-	runTimeSec := runTimeTicks / 10000000 // ticks → 秒
+	runTimeSec := runTimeTicks / 10000000
 
-	// 查询下一集
 	if seriesID == "" || seasonID == "" || currentIndex < 0 {
-		logging.Debugf("预提取：剧集 %s 缺少 SeriesID/SeasonID/IndexNumber，无法获取下一集", itemID)
+		logging.Debugf("预提取：剧集 %s 缺少 SeriesID/SeasonID/IndexNumber", itemID)
 		return
 	}
 
@@ -131,23 +104,19 @@ func (p *PrefetchService) OnPlaybackStart(itemID string) {
 
 	logging.Infof("当前剧集: %s (时长: %d秒), 下一集: %s", itemID, runTimeSec, nextItemID)
 
-	// 立即预取一次
 	go p.doPrefetch(nextItemID)
-
-	// 停止旧定时器
 	p.stopTimer(itemID)
 
-	// 计算刷新间隔：每 25% 视频时长刷新一次
 	refreshInterval := float64(runTimeSec) * config.Prefetch.RefreshInterval
 	if refreshInterval < 30 {
-		refreshInterval = 30 // 最短 30 秒
+		refreshInterval = 30
 	}
 	interval := time.Duration(refreshInterval) * time.Second
 
 	timer := &playbackTimer{
-		ticker:    time.NewTicker(interval),
-		stopChan:  make(chan struct{}),
-		nextID:    nextItemID,
+		ticker:     time.NewTicker(interval),
+		stopChan:   make(chan struct{}),
+		nextID:     nextItemID,
 		runTimeSec: runTimeSec,
 	}
 
@@ -156,12 +125,8 @@ func (p *PrefetchService) OnPlaybackStart(itemID string) {
 	p.mu.Unlock()
 
 	logging.Infof("预提取：启动定时器，每 %v 刷新一次下一集 %s 的直链（%.0f 分钟视频，每 %.0f 分钟刷新）",
-		interval, nextItemID,
-		float64(runTimeSec)/60.0,
-		interval.Seconds()/60.0,
-	)
+		interval, nextItemID, float64(runTimeSec)/60.0, interval.Seconds()/60.0)
 
-	// 启动定时刷新协程
 	go func() {
 		for {
 			select {
@@ -177,7 +142,6 @@ func (p *PrefetchService) OnPlaybackStart(itemID string) {
 	}()
 }
 
-// OnPlaybackStop 播放停止时取消定时器
 func (p *PrefetchService) OnPlaybackStop(itemID string) {
 	p.stopTimer(itemID)
 }
@@ -185,28 +149,19 @@ func (p *PrefetchService) OnPlaybackStop(itemID string) {
 func (p *PrefetchService) stopTimer(itemID string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-
 	if timer, ok := p.timers[itemID]; ok {
 		close(timer.stopChan)
 		delete(p.timers, itemID)
 	}
 }
 
-// doPrefetch 执行预提取（带并发控制）
+// doPrefetch 执行预提取，调用主 handler 的 httpStrmHandler 写入共享 bigcache
 func (p *PrefetchService) doPrefetch(itemID string) {
-	// 并发控制
 	p.sem <- struct{}{}
 	defer func() { <-p.sem }()
 
-	// 检查是否已有未过期的缓存
-	if cached := p.GetCachedURL(itemID); cached != "" {
-		logging.Debugf("预提取：剧集 %s 已有有效缓存，跳过", itemID)
-		return
-	}
-
 	logging.Infof("预提取：开始解析剧集 %s 的直链", itemID)
 
-	// 获取 Strm 内容（HTTP URL）和类型
 	content, _, err := p.getStrmContent(itemID)
 	if err != nil {
 		logging.Warningf("预提取：获取剧集 %s 的 Strm 内容失败: %v", itemID, err)
@@ -217,45 +172,15 @@ func (p *PrefetchService) doPrefetch(itemID string) {
 		return
 	}
 
-	// 直接调用 getFinalURL 获取最终直链（和正常播放完全一样）
-	finalURL, err := p.resolveFinalURL(content)
-	if err != nil {
-		logging.Warningf("预提取：解析剧集 %s 直链失败: %v", itemID, err)
+	finalURL := p.httpStrmHandler(content, "")
+	if finalURL == "" {
+		logging.Warningf("预提取：解析剧集 %s 直链失败", itemID)
 		return
 	}
 
-	// 解析过期时间（从 URL 签名推断）
-	expiresAt := p.extractExpiresFromURL(finalURL)
-
-	// 写入缓存
-	if p.cache != nil {
-		cacheValue := fmt.Sprintf("%s|%d|%d",
-			finalURL,
-			expiresAt.Unix(),
-			time.Now().Unix(),
-		)
-		if err := p.cache.Set(itemID, []byte(cacheValue)); err != nil {
-			logging.Warningf("预提取：缓存剧集 %s 直链失败: %v", itemID, err)
-			return
-		}
-
-		ttl := expiresAt.Sub(time.Now())
-		logging.Infof("预提取：剧集 %s 直链已缓存，TTL: %v", itemID, ttl.Round(time.Second))
-	}
+	logging.Infof("预提取：剧集 %s 直链已缓存", itemID)
 }
 
-// resolveFinalURL 解析 Strm URL 的最终直链
-func (p *PrefetchService) resolveFinalURL(rawURL string) (string, error) {
-	client := &http.Client{
-		Timeout: RedirectTimeout,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-	return getFinalURL(client, rawURL, "")
-}
-
-// queryItemRuntime 查询剧集的运行时和剧集信息
 func (p *PrefetchService) queryItemRuntime(itemID string) (runTimeTicks int64, seriesID string, seasonID string, indexNumber int64, err error) {
 	params := url.Values{}
 	params.Add("Ids", itemID)
@@ -293,7 +218,6 @@ func (p *PrefetchService) queryItemRuntime(itemID string) (runTimeTicks int64, s
 	return runTimeTicks, seriesID, seasonID, indexNumber, nil
 }
 
-// queryNextEpisodeID 查询下一集 ID
 func (p *PrefetchService) queryNextEpisodeID(seriesID string, seasonID string, currentIndex int64) (string, error) {
 	nextIndex := currentIndex + 1
 
@@ -338,7 +262,6 @@ func (p *PrefetchService) queryNextEpisodeID(seriesID string, seasonID string, c
 	return "", nil
 }
 
-// getStrmContent 获取剧集的 Strm 文件内容和识别类型
 func (p *PrefetchService) getStrmContent(itemID string) (content string, ua string, err error) {
 	params := url.Values{}
 	params.Add("Ids", itemID)
@@ -387,75 +310,3 @@ func (p *PrefetchService) getStrmContent(itemID string) (content string, ua stri
 	content = mediaSources[0].Get("Path").String()
 	return content, "", nil
 }
-
-// extractExpiresFromURL 从 URL 中提取过期时间
-func (p *PrefetchService) extractExpiresFromURL(u string) time.Time {
-	parsed, err := url.Parse(u)
-	if err != nil {
-		return time.Now().Add(30 * time.Minute)
-	}
-
-	query := parsed.Query()
-	expiresParams := []string{"expires", "expire", "exp", "deadline", "sign", "token"}
-
-	for _, param := range expiresParams {
-		expStr := query.Get(param)
-		if expStr == "" {
-			continue
-		}
-
-		if ts, err := strconv.ParseInt(expStr, 10, 64); err == nil {
-			t := time.Unix(ts, 0)
-			if t.After(time.Now()) && t.Before(time.Now().Add(365*24*time.Hour)) {
-				return t.Add(-5 * time.Minute)
-			}
-		}
-	}
-
-	return time.Now().Add(30 * time.Minute)
-}
-
-// GetCachedURL 获取缓存的预提取直链，返回空字符串表示未命中
-func (p *PrefetchService) GetCachedURL(itemID string) string {
-	if p == nil || p.cache == nil {
-		return ""
-	}
-
-	entryBytes, err := p.cache.Get(itemID)
-	if err != nil {
-		return ""
-	}
-
-	// 解析 "finalURL|expiresAt|createdAt"
-	parts := make([]string, 0, 3)
-	current := ""
-	for _, b := range entryBytes {
-		if b == '|' {
-			parts = append(parts, current)
-			current = ""
-		} else {
-			current += string(b)
-		}
-	}
-	parts = append(parts, current)
-
-	if len(parts) < 2 {
-		p.cache.Delete(itemID)
-		return ""
-	}
-
-	finalURL := parts[0]
-	expiresAt, _ := strconv.ParseInt(parts[1], 10, 64)
-
-	if time.Now().Unix() > expiresAt {
-		logging.Infof("预提取缓存已过期: %s", itemID)
-		p.cache.Delete(itemID)
-		return ""
-	}
-
-	ttl := time.Until(time.Unix(expiresAt, 0))
-	logging.Infof("命中预提取缓存: %s，剩余有效时间: %v", itemID, ttl.Round(time.Second))
-	return finalURL
-}
-
-var _ = (*PrefetchService)(nil)

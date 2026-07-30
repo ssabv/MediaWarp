@@ -471,4 +471,8 @@ func (embyServerHandler *EmbyServerHandler) ModifyIndex(rw *http.Response) error
 	return nil
 }
 
+func (e *EmbyServerHandler) GetHTTPStrmHandler() StrmHandlerFunc {
+	return e.httpStrmHandler
+}
+
 var _ MediaServerHandler = (*EmbyServerHandler)(nil) // 确保 EmbyServerHandler 实现 MediaServerHandler 接口

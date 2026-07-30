@@ -98,6 +98,11 @@ func (*JellyfinHandler) GetSubtitleCacheRegexp() *regexp.Regexp {
 	return constants.JellyfinRegexp.Cache.Subtitle
 }
 
+// GetHTTPStrmHandler 返回 HTTPStrm 处理器，供预提取服务复用缓存
+func (j *JellyfinHandler) GetHTTPStrmHandler() StrmHandlerFunc {
+	return j.httpStrmHandler
+}
+
 // 修改播放信息请求
 //
 // /Items/:itemId
