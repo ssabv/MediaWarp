@@ -171,6 +171,15 @@ func (handler *EmbyHandler) ModifyPlaybackInfo(rw *http.Response) error {
 				mediasource.DirectStreamURL,
 			)
 
+			// 异步预解析 HTTPStrm URL 并缓存，实现秒起播
+			// 浏览详情时后台跟踪重定向链，点播放时命中 bigcache
+			if config.HTTPStrm.FinalURL && config.Cache.Enable && mediasource.Path != nil {
+				go func(content string) {
+					handler.httpStrmHandler(content, "")
+					logging.Debugf("ModifyPlaybackInfo HTTPStrm 预解析完成: %s", content)
+				}(*mediasource.Path)
+			}
+
 		case constants.AlistStrm: // AlistStm 设置支持直链播放并且禁止转码
 			processAlistStrmPlaybackInfo(
 				jsonChain,
