@@ -162,23 +162,24 @@ func (p *PrefetchService) doPrefetch(itemID string) {
 
 	logging.Infof("预提取：开始解析剧集 %s 的直链", itemID)
 
-	content, _, err := p.getStrmContent(itemID)
+	contents, _, err := p.getStrmContent(itemID)
 	if err != nil {
 		logging.Warningf("预提取：获取剧集 %s 的 Strm 内容失败: %v", itemID, err)
 		return
 	}
-	if content == "" {
+	if len(contents) == 0 {
 		logging.Debugf("预提取：剧集 %s 不是 HTTPStrm，跳过", itemID)
 		return
 	}
 
-	finalURL := p.httpStrmHandler(content, "")
-	if finalURL == "" {
-		logging.Warningf("预提取：解析剧集 %s 直链失败", itemID)
-		return
+	for _, content := range contents {
+		finalURL := p.httpStrmHandler(content, "")
+		if finalURL == "" {
+			logging.Warningf("预提取：解析剧集 %s 直链失败", itemID)
+			continue
+		}
+		logging.Infof("预提取：剧集 %s 直链已缓存", itemID)
 	}
-
-	logging.Infof("预提取：剧集 %s 直链已缓存", itemID)
 }
 
 func (p *PrefetchService) queryItemRuntime(itemID string) (runTimeTicks int64, seriesID string, seasonID string, indexNumber int64, err error) {
@@ -262,7 +263,7 @@ func (p *PrefetchService) queryNextEpisodeID(seriesID string, seasonID string, c
 	return "", nil
 }
 
-func (p *PrefetchService) getStrmContent(itemID string) (content string, ua string, err error) {
+func (p *PrefetchService) getStrmContent(itemID string) (contents []string, ua string, err error) {
 	params := url.Values{}
 	params.Add("Ids", itemID)
 	params.Add("Limit", "1")
@@ -277,17 +278,17 @@ func (p *PrefetchService) getStrmContent(itemID string) (content string, ua stri
 		params.Add("ApiKey", p.mediaServerAPIKey)
 		apiURL = fmt.Sprintf("%s/Items?%s", p.mediaServerAddr, params.Encode())
 	default:
-		return "", "", fmt.Errorf("不支持的媒体服务器类型")
+		return nil, "", fmt.Errorf("不支持的媒体服务器类型")
 	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Get(apiURL)
 	if err != nil {
-		return "", "", err
+		return nil, "", err
 	}
 	defer resp.Body.Close()
 
-	body := make([]byte, 4096)
+	body := make([]byte, 16384)
 	n, _ := resp.Body.Read(body)
 	bodyStr := string(body[:n])
 
@@ -295,18 +296,23 @@ func (p *PrefetchService) getStrmContent(itemID string) (content string, ua stri
 	mediaSources := gjson.Get(bodyStr, "Items.0.MediaSources").Array()
 
 	if len(itemPath) < 5 || itemPath[len(itemPath)-5:] != ".strm" {
-		return "", "", nil
+		return nil, "", nil
 	}
 
 	strmFileType, _ := recgonizeStrmFileType(itemPath)
 	if strmFileType != constants.HTTPStrm {
-		return "", "", nil
+		return nil, "", nil
 	}
 
 	if len(mediaSources) == 0 {
-		return "", "", fmt.Errorf("MediaSources 为空")
+		return nil, "", fmt.Errorf("MediaSources 为空")
 	}
 
-	content = mediaSources[0].Get("Path").String()
-	return content, "", nil
+	for _, mediaSource := range mediaSources {
+		content := mediaSource.Get("Path").String()
+		if content != "" {
+			contents = append(contents, content)
+		}
+	}
+	return contents, "", nil
 }
