@@ -100,9 +100,10 @@ type SubtitleSetting struct {
 
 // 预提取设置
 type PrefetchSetting struct {
-	Enable                bool    `yaml:"enable"`
-	RefreshInterval       float64 `yaml:"refresh_interval"`        // 刷新间隔（视频时长百分比），默认 0.25
-	MaxConcurrentPrefetch int     `yaml:"max_concurrent_prefetch"` // 最大并发预取数
+	Enable                bool          `yaml:"enable"`
+	RefreshInterval       float64       `yaml:"refresh_interval"`        // 刷新间隔（视频时长百分比），默认 0.25
+	MaxConcurrentPrefetch int           `yaml:"max_concurrent_prefetch"` // 最大并发预取数
+	PrefetchCacheTTL      time.Duration `yaml:"prefetch_cache_ttl"`      // 预提取直链缓存有效期，默认 2h（播放中刷新会持续回填续期）
 }
 
 type Setting struct {

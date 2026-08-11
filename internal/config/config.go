@@ -123,6 +123,9 @@ func loadConfig(path string) error {
 	if Prefetch.RefreshInterval <= 0 {
 		Prefetch.RefreshInterval = 0.25 // 默认每 25% 时长刷新
 	}
+	if Prefetch.PrefetchCacheTTL <= 0 {
+		Prefetch.PrefetchCacheTTL = 2 * time.Hour // 默认预提取缓存有效期 2h
+	}
 	return nil
 }
 
