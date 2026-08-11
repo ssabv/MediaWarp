@@ -35,6 +35,11 @@ func getHTTPStrmHandler() (StrmHandlerFunc, error) {
 		if config.HTTPStrm.FinalURL {
 			if cache != nil {
 				if cachedURL, err := cache.Get(content); err == nil {
+					// 命中缓存后重新写入,重置 TTL 以延长存活期到下一次提取,
+					// 保证预提取的直链不会在播放中途因 TTL 到期而失效
+					if err := cache.Set(content, cachedURL); err != nil {
+						logging.Warning("续期 HTTPStrm 缓存失败: ", err)
+					}
 					logging.Infof("HTTPStrm 重定向至: %s (缓存)", string(cachedURL))
 					return string(cachedURL)
 				}
