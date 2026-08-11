@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/allegro/bigcache/v3"
 )
@@ -30,10 +31,21 @@ func getHTTPStrmHandler() (StrmHandlerFunc, error) {
 		logging.Info("启用 HTTPStrm 缓存，TTL: ", config.Cache.HTTPStrmTTL)
 	}
 
-	// 预提取专用缓存:TTL 默认 2h,与 http_strm_ttl 解耦
+	// 预提取专用缓存:TTL 默认 2h,与 http_strm_ttl 解耦。
+	// 使用精简 bigcache 配置(预提取直链条目很少),避免 DefaultConfig
+	// 预分配约 250MB 内存导致容器内存翻倍。
 	if config.Prefetch.Enable {
+		prefetchConfig := bigcache.Config{
+			Shards:             64,
+			LifeWindow:         config.Prefetch.PrefetchCacheTTL,
+			CleanWindow:        5 * time.Minute,
+			MaxEntriesInWindow: 100,
+			MaxEntrySize:       2048,
+			HardMaxCacheSize:   16, // 16MB 硬上限
+			Verbose:            false,
+		}
 		var err error
-		prefetchCache, err = bigcache.New(context.Background(), bigcache.DefaultConfig(config.Prefetch.PrefetchCacheTTL))
+		prefetchCache, err = bigcache.New(context.Background(), prefetchConfig)
 		if err != nil {
 			return nil, fmt.Errorf("创建预提取缓存失败: %w", err)
 		}
