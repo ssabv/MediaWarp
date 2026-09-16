@@ -174,11 +174,15 @@ func (p *PrefetchService) doPrefetch(itemID string) {
 
 	for _, content := range contents {
 		finalURL := p.httpStrmHandler(content, "")
-		if finalURL == "" {
+		switch {
+		case finalURL == "":
 			logging.Warningf("预提取：解析剧集 %s 直链失败", itemID)
-			continue
+		case finalURL == content:
+			// 解析失败时 handler 会回退返回原始 URL（不写缓存），此处单独提示便于排查
+			logging.Warningf("预提取：剧集 %s 直链解析失败，已回退原始 URL，本次不缓存，等待下次定时刷新重试", itemID)
+		default:
+			logging.Infof("预提取：剧集 %s 直链已缓存", itemID)
 		}
-		logging.Infof("预提取：剧集 %s 直链已缓存", itemID)
 	}
 }
 

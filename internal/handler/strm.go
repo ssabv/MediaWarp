@@ -63,36 +63,55 @@ func getHTTPStrmHandler() (StrmHandlerFunc, error) {
 		if config.HTTPStrm.FinalURL {
 			if cache != nil {
 				if cachedURL, err := cache.Get(content); err == nil {
-					// 命中缓存后重新写入,重置 TTL 以延长存活期到下一次提取,
-					// 保证预提取的直链不会在播放中途因 TTL 到期而失效
-					if err := cache.Set(content, cachedURL); err != nil {
-						logging.Warning("续期 HTTPStrm 缓存失败: ", err)
+					// 空值一律视为未命中：历史版本解析失败时会把空串写入缓存，
+					// 命中后 302 到空地址，该路径后续播放会一直失败，且因续期而永不失效
+					if len(cachedURL) > 0 {
+						// 命中缓存后重新写入,重置 TTL 以延长存活期到下一次提取,
+						// 保证预提取的直链不会在播放中途因 TTL 到期而失效
+						if err := cache.Set(content, cachedURL); err != nil {
+							logging.Warning("续期 HTTPStrm 缓存失败: ", err)
+						}
+						logging.Infof("HTTPStrm 重定向至: %s (缓存)", string(cachedURL))
+						return string(cachedURL)
 					}
-					logging.Infof("HTTPStrm 重定向至: %s (缓存)", string(cachedURL))
-					return string(cachedURL)
+					if err := cache.Delete(content); err != nil { // 清掉被污染的空条目，让它自然重试
+						logging.Warning("清理无效 HTTPStrm 缓存失败: ", err)
+					}
 				}
 			}
 
 			// 二级兜底:查预提取长 TTL 缓存,命中则回填常规缓存并返回
 			if prefetchCache != nil {
 				if cachedURL, err := prefetchCache.Get(content); err == nil {
-					if cache != nil {
-						if err := cache.Set(content, cachedURL); err != nil {
-							logging.Warning("回填 HTTPStrm 缓存失败: ", err)
+					if len(cachedURL) > 0 {
+						if cache != nil {
+							if err := cache.Set(content, cachedURL); err != nil {
+								logging.Warning("回填 HTTPStrm 缓存失败: ", err)
+							}
 						}
+						logging.Infof("HTTPStrm 重定向至: %s (预取缓存)", string(cachedURL))
+						return string(cachedURL)
 					}
-					logging.Infof("HTTPStrm 重定向至: %s (预取缓存)", string(cachedURL))
-					return string(cachedURL)
+					if err := prefetchCache.Delete(content); err != nil {
+						logging.Warning("清理无效预提取缓存失败: ", err)
+					}
 				}
 			}
 
 			logging.Debug("HTTPStrm 启用获取最终 URL，开始尝试获取最终 URL")
 			finalURL, err := getFinalURL(client, content, ua)
+			// 解析失败时回退使用原始 URL，且绝不写缓存：
+			// 失败结果一旦入库会被反复命中并不断续期，导致该路径后续播放全部失败，只能重启进程恢复
 			if err != nil {
-				logging.Warning("获取最终 URL 失败，使用原始 URL: ", err)
-			} else {
-				logging.Info("HTTPStrm 重定向至: ", finalURL)
+				logging.Warningf("获取最终 URL 失败，回退使用原始 URL(%s): %v", content, err)
+				return content
 			}
+			if finalURL == "" {
+				logging.Warningf("获取最终 URL 为空，回退使用原始 URL(%s)", content)
+				return content
+			}
+
+			logging.Info("HTTPStrm 重定向至: ", finalURL)
 			if cache != nil {
 				if err := cache.Set(content, []byte(finalURL)); err != nil {
 					logging.Warning("缓存 HTTPStrm URL 失败: ", err)

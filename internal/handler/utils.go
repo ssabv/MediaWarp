@@ -143,6 +143,12 @@ func getFinalURL(client *http.Client, rawURL string, ua string) (string, error) 
 			continue
 		}
 
+		// 非 2xx 响应说明没拿到可播放的直链（如 403 链接失效、404、5xx），
+		// 返回错误让上层回退使用原始 URL，避免把失效地址写进缓存
+		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+			return "", fmt.Errorf("响应状态码异常（%d），无法获取最终 URL", resp.StatusCode)
+		}
+
 		// 返回最终的非重定向URL
 		logging.Debug("重定向链：", strings.Join(redirectChain, " -> "))
 		return resp.Request.URL.String(), nil
